@@ -15,8 +15,8 @@ Vexa Calendar-Service (`services/calendar-service/`) ist im Upstream-Code vorhan
 Wir wollen den Service ohne Warten auf offizielles Ship (vermutlich 0.11+, kein Datum) ausprobieren. Strategie:
 
 - Upstream-Files unverändert
-- `neurawork/docker-compose.override.yml` aktiviert calendar-service via additive Service-Definition
-- Test lokal via `docker compose -f deploy/compose/docker-compose.yml -f neurawork/docker-compose.override.yml up`
+- `neurawork/calendar.compose.yml` aktiviert calendar-service via additive Service-Definition (nicht `docker-compose.override.yml` — upstream `.gitignore` blockt das)
+- Test lokal via `docker compose -f deploy/compose/docker-compose.yml -f neurawork/calendar.compose.yml up`
 
 ## Sync mit Upstream
 

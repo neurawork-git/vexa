@@ -14,7 +14,7 @@ Kein offizielles Ship-Datum bekannt — 0.11-Milestone (58 open) listet kein Cal
 |-------|-------|
 | `CLAUDE.md` | Scope-Regeln für Claude Code in diesem Subdir |
 | `README.md` | Dieses Dokument |
-| `docker-compose.override.yml` | Compose-Overlay aktiviert calendar-service |
+| `calendar.compose.yml` | Compose-Overlay aktiviert calendar-service (nicht `docker-compose.override.yml` — upstream `.gitignore` blockt diesen Namen) |
 | `.env.example` | Required Env-Vars (Google OAuth Credentials) |
 
 ## Setup
@@ -29,7 +29,7 @@ Kein offizielles Ship-Datum bekannt — 0.11-Milestone (58 open) listet kein Cal
    ```bash
    docker compose \
      -f deploy/compose/docker-compose.yml \
-     -f neurawork/docker-compose.override.yml \
+     -f neurawork/calendar.compose.yml \
      up -d --build
    ```
 

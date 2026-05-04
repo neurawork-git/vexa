@@ -1,0 +1,41 @@
+# Compose-Overlay: aktiviert calendar-service zusätzlich zum Base-Stack.
+#
+# Usage:
+#   docker compose \
+#     -f deploy/compose/docker-compose.yml \
+#     -f neurawork/docker-compose.override.yml \
+#     up -d --build
+#
+# Service-Definition 1:1 aus den NO-SHIP-Kommentaren in
+# deploy/compose/docker-compose.yml (Block ab "calendar-service: NO-SHIP for 0.10").
+
+name: vexa
+
+services:
+  calendar-service:
+    build:
+      context: ..
+      dockerfile: services/calendar-service/Dockerfile
+    image: vexaai/calendar-service:${IMAGE_TAG:-latest}
+    ports:
+      - "${CALENDAR_SERVICE_PORT:-8050}:8050"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-vexa}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - DB_SSL_MODE=disable
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - MEETING_API_URL=http://meeting-api:8080
+      - BOT_API_TOKEN=${BOT_API_TOKEN:-}
+      - SYNC_INTERVAL_SECONDS=${CALENDAR_SYNC_INTERVAL:-300}
+      - DEFAULT_LEAD_TIME_MINUTES=${CALENDAR_LEAD_TIME:-2}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - postgres
+      - meeting-api
+    networks:
+      - vexa
+    restart: unless-stopped
