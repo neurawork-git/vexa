@@ -191,7 +191,14 @@ export default function MeetingsPage() {
 
   const filteredMeetings: Meeting[] = useMemo(() => {
     if (statusFilter === "upcoming") return upcomingRows;
-    return [...meetings, ...upcomingRows];
+    const combined = [...meetings, ...upcomingRows];
+    // Sort descending by effective time: future upcoming events on top, past meetings below.
+    // Uses parseUTCTimestamp consistent with the Time column rendering (page.tsx:431-439).
+    return combined.sort((a, b) => {
+      const tA = parseUTCTimestamp(a.start_time ?? a.created_at).getTime();
+      const tB = parseUTCTimestamp(b.start_time ?? b.created_at).getTime();
+      return tB - tA;
+    });
   }, [meetings, upcomingRows, statusFilter]);
 
   // Infinite scroll
