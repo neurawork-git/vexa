@@ -30,4 +30,8 @@ Bei Konflikten in `neurawork/`-Files: lokal lösen. Konflikte in Upstream-Files 
 
 ## Companion-Repo
 
-Das produktive K8s-Deployment läuft aus `nashtrader/vexa-k8s` (`charts/vexa-lite/` vendored Chart). Dieser Fork ist **nur Test-Sandbox** — falls Calendar-Service ship-ready, würde ein eigenes Helm-Template in `vexa-k8s` ergänzt, nicht hier.
+Das produktive K8s-Deployment läuft aus `neurawork-git/vexa-k8s` (`charts/vexa-lite/` vendored Chart). Dieser Fork ist **nur Test-Sandbox** — das Helm-Template + Build-Workflow für calendar-service leben in vexa-k8s.
+
+## Container Registry
+
+Eigene Neurawork-Images (nicht upstream `vexaai/*`) gehen nach `neuraworkacr.azurecr.io`. Der Build-Workflow liegt in `vexa-k8s/.github/workflows/build-calendar-service.yml` und nutzt `AZURE_CREDENTIALS` → `az acr login`. AKS zieht die Images via nativem AcrPull der Kubelet-Managed-Identity — kein `imagePullSecret` nötig.
