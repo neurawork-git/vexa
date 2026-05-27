@@ -89,7 +89,7 @@ export default function MeetingsPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [platformFilter, setPlatformFilter] = useState<Platform | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<MeetingStatus | "upcoming" | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<MeetingStatus | "all">("all");
   const [isCreatingBrowser, setIsCreatingBrowser] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
@@ -180,7 +180,7 @@ export default function MeetingsPage() {
       id: `cal-${e.id}`,
       platform: (e.platform as Platform) || "google_meet",
       platform_specific_id: e.meeting_url || "",
-      status: "upcoming" as unknown as MeetingStatus,
+      status: "upcoming",
       start_time: e.start_time,
       end_time: e.end_time,
       bot_container_id: null,
@@ -291,7 +291,7 @@ export default function MeetingsPage() {
                 <SelectItem value="browser_session">Browser</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as MeetingStatus | "upcoming" | "all")}>
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as MeetingStatus | "all")}>
               <SelectTrigger className="flex-1 min-w-0 sm:w-[130px] lg:w-[150px]">
                 <SelectValue placeholder="All Status" />
               </SelectTrigger>
@@ -381,7 +381,7 @@ export default function MeetingsPage() {
 
 function MeetingRow({ meeting }: { meeting: Meeting }) {
   const router = useRouter();
-  const isUpcoming = (meeting.status as string) === "upcoming";
+  const isUpcoming = meeting.status === "upcoming";
   const statusConfig = isUpcoming
     ? { label: "Upcoming", color: "text-violet-400", bgColor: "" }
     : getDetailedStatus(meeting.status, meeting.data);
@@ -408,7 +408,7 @@ function MeetingRow({ meeting }: { meeting: Meeting }) {
         </td>
         <td className="px-5 py-3">
           <span className="inline-flex items-center gap-1.5">
-            <StatusDot status={meeting.status as string} />
+            <StatusDot status={meeting.status} />
             <span className={cn("text-xs", statusConfig.color)}>
               {statusConfig.label}
             </span>
