@@ -10,7 +10,8 @@ export type MeetingStatus =
   | "needs_human_help"
   | "stopping"
   | "completed"
-  | "failed";
+  | "failed"
+  | "upcoming";
 
 export interface Meeting {
   id: string;
@@ -278,6 +279,7 @@ export const MEETING_STATUS_CONFIG: Record<MeetingStatus, { label: string; color
   stopping: { label: "Stopping", color: "text-slate-600 dark:text-slate-400", bgColor: "bg-slate-100 dark:bg-slate-900/50" },
   completed: { label: "Completed", color: "text-green-600 dark:text-green-400", bgColor: "bg-green-100 dark:bg-green-950/50" },
   failed: { label: "Failed", color: "text-red-600 dark:text-red-400", bgColor: "bg-red-100 dark:bg-red-950/50" },
+  upcoming: { label: "Upcoming", color: "text-violet-600 dark:text-violet-400", bgColor: "bg-violet-100 dark:bg-violet-950/50" },
 };
 
 // Get detailed status info based on meeting data
@@ -474,6 +476,20 @@ export interface RecordingData {
   created_at: string;
   completed_at: string | null;
   media_files: RecordingMediaFile[];
+}
+
+// ==========================================
+// Calendar Event Types (from calendar-service)
+// ==========================================
+
+export interface CalendarEvent {
+  id: number;
+  title: string;
+  start_time: string | null;
+  end_time: string | null;
+  meeting_url: string | null;
+  platform: string | null;
+  status: string; // "pending" | "scheduled" | "cancelled" | "failed"
 }
 
 // ==========================================

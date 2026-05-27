@@ -41,10 +41,14 @@ Der Global-Setup (`e2e/global-setup.ts`) nutzt den **Direct-Login-Mode**:
 
 | Datei | Beschreibung |
 |-------|-------------|
-| `calendar-connect.spec.ts` | "Calendar verbinden"-Button auf /profile — OAuth-Start-Flow |
+| `calendar-connect.spec.ts` | "Calendar verbinden"-Button auf /profile — OAuth-Start-Flow (echtes Backend) |
+| `calendar-connect-mock-smoke.spec.ts` | OAuth-Start-Flow — Mock-gestützt, kein Backend nötig (Beweisstufe 3/4) |
+| `upcoming-meetings-mock-smoke.spec.ts` | /meetings — upcoming-Kalender-Events, Filter, kein Click-Through (Mock, Beweisstufe 3/4) |
 
 ## Hinweise für B.A.
 
 - Button muss `data-testid="calendar-connect-btn"` haben
 - Button-Placement: `/profile` page
 - Loading-State beim API-Call: Button disabled oder Spinner mit `animate-spin`-Klasse
+- upcoming-Meetings-Rows: kein Click-Through zu `/meetings/:id` (Status "upcoming" blockt Navigation)
+- Kalender-Proxy-Response-Format: `{ events: CalendarEvent[], configured: boolean }` (kein reines Array)

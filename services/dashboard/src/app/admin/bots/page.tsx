@@ -52,6 +52,7 @@ const STATUS_CONFIG: Record<MeetingStatus, { label: string; color: string; icon:
   stopping: { label: "Stopping", color: "bg-slate-100 text-slate-700", icon: Loader2 },
   completed: { label: "Completed", color: "bg-blue-100 text-blue-700", icon: CheckCircle },
   failed: { label: "Failed", color: "bg-red-100 text-red-700", icon: XCircle },
+  upcoming: { label: "Upcoming", color: "bg-violet-100 text-violet-700", icon: Clock },
 };
 
 export default function AdminBotsPage() {
