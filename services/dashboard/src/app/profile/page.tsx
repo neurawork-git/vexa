@@ -12,7 +12,6 @@ import {
   RefreshCw,
   CalendarDays,
   CheckCircle2,
-  XCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,7 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { toast } from "sonner";
+// toast wird pro-Aufruf dynamisch importiert (handleConnect/handleDisconnect)
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import { withBasePath } from "@/lib/base-path";
@@ -620,7 +619,7 @@ function GoogleCalendarCard({ userEmail }: { userEmail: string | null }) {
             size="sm"
             data-testid="calendar-connect-btn"
             onClick={handleConnect}
-            disabled={isConnecting || !userEmail}
+            disabled={isConnecting || !userEmail || isLoadingStatus}
           >
             {isConnecting ? (
               <>

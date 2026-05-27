@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
   try {
     const resp = await fetch(
       `${calendarUrl}/calendar/status?user_id=${userResult.data.id}`,
-      { next: { revalidate: 0 } }
+      { next: { revalidate: 0 }, signal: AbortSignal.timeout(5000) }
     );
     const data = await resp.json();
     return NextResponse.json(data, { status: resp.status });
