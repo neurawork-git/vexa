@@ -12,9 +12,17 @@
 name: vexa
 
 services:
+  # Dashboard: CALENDAR_SERVICE_URL damit die Proxy-Routes (/api/calendar/proxy/*)
+  # den calendar-service über den Compose-internen DNS erreichen können.
+  dashboard:
+    environment:
+      - CALENDAR_SERVICE_URL=http://calendar-service:8050
+
   calendar-service:
     build:
-      context: ..
+      # Context relativ zur ersten -f-Datei (deploy/compose/docker-compose.yml):
+      # deploy/compose/../../ = Repo-Root.
+      context: ../..
       dockerfile: services/calendar-service/Dockerfile
     image: vexaai/calendar-service:${IMAGE_TAG:-latest}
     ports:

@@ -10,6 +10,9 @@ import {
   Check,
   GitBranch,
   RefreshCw,
+  CalendarDays,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,6 +30,7 @@ import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import { withBasePath } from "@/lib/base-path";
+import { startGoogleCalendarOAuth } from "@/lib/google-calendar-oauth-client";
 
 // ==========================================
 // Types
@@ -500,9 +504,139 @@ export default function ProfilePage() {
         </DialogContent>
       </Dialog>
 
+      {/* Google Calendar */}
+      <GoogleCalendarCard userEmail={user?.email ?? null} />
+
       {/* Git Workspace */}
       <GitWorkspaceCard />
     </div>
+  );
+}
+
+// ==========================================
+// Google Calendar Card
+// ==========================================
+
+// Status check via Next.js proxy route (/api/calendar/proxy) — falls
+// CALENDAR_SERVICE_URL nicht gesetzt ist, gibt die Route 503 zurück und
+// die Komponente fällt auf "unbekannt" zurück ohne zu crashen.
+type CalendarStatus = { connected: boolean; event_count: number | null } | null;
+
+function GoogleCalendarCard({ userEmail }: { userEmail: string | null }) {
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(true);
+  const [status, setStatus] = useState<CalendarStatus>(null);
+
+  useEffect(() => {
+    if (!userEmail) {
+      setIsLoadingStatus(false);
+      return;
+    }
+    fetch(withBasePath(`/api/calendar/proxy/status?userEmail=${encodeURIComponent(userEmail)}`))
+      .then(async (r) => {
+        if (!r.ok) return;
+        const data = await r.json();
+        setStatus({
+          connected: Boolean(data.connected),
+          event_count: typeof data.event_count === "number" ? data.event_count : null,
+        });
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingStatus(false));
+  }, [userEmail]);
+
+  async function handleConnect() {
+    if (!userEmail) return;
+    setIsConnecting(true);
+    try {
+      await startGoogleCalendarOAuth({ userEmail, returnTo: "/meetings" });
+      // window.location.assign fires — no further state update needed.
+    } catch (error) {
+      const { toast } = await import("sonner");
+      toast.error("Failed to start Google Calendar connection", {
+        description: (error as Error).message,
+      });
+      setIsConnecting(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!userEmail) return;
+    try {
+      const resp = await fetch(
+        withBasePath(`/api/calendar/proxy/disconnect?userEmail=${encodeURIComponent(userEmail)}`),
+        { method: "DELETE" }
+      );
+      if (!resp.ok) throw new Error(await resp.text());
+      setStatus(null);
+      const { toast } = await import("sonner");
+      toast.success("Google Calendar disconnected");
+    } catch (error) {
+      const { toast } = await import("sonner");
+      toast.error("Failed to disconnect", { description: (error as Error).message });
+    }
+  }
+
+  const connected = status?.connected ?? false;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CalendarDays className="h-5 w-5" />
+          Google Calendar
+          {!isLoadingStatus && connected && (
+            <CheckCircle2 className="h-4 w-4 text-green-500" />
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Connect your Google Calendar to automatically join upcoming meetings without manual bot invites.
+        </p>
+
+        {isLoadingStatus ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">Checking status…</span>
+          </div>
+        ) : connected ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm">
+              <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+              <span className="text-green-600 dark:text-green-400 font-medium">Connected</span>
+              {status?.event_count !== null && status?.event_count !== undefined && (
+                <span className="text-muted-foreground">
+                  — {status.event_count} upcoming event{status.event_count !== 1 ? "s" : ""} synced
+                </span>
+              )}
+            </div>
+            <Button size="sm" variant="outline" onClick={handleDisconnect}>
+              Disconnect
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            data-testid="calendar-connect-btn"
+            onClick={handleConnect}
+            disabled={isConnecting || !userEmail}
+          >
+            {isConnecting ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
+                Redirecting…
+              </>
+            ) : (
+              <>
+                <CalendarDays className="h-3.5 w-3.5 mr-1.5" />
+                Connect Google Calendar
+              </>
+            )}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
