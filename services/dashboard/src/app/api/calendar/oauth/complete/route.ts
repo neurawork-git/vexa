@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac } from "crypto";
-import { getUserById, updateUser } from "@/lib/vexa-admin-api";
+import { getUserById, updateUser, createUserToken } from "@/lib/vexa-admin-api";
 
 type CalendarOAuthStatePayload = {
   userId: string;
@@ -162,18 +162,41 @@ export async function POST(req: NextRequest) {
     const now = Math.floor(Date.now() / 1000);
     const existingData =
       userResult.data.data && typeof userResult.data.data === "object"
-        ? userResult.data.data
+        ? (userResult.data.data as Record<string, unknown>)
+        : {};
+
+    // Mint a per-user Vexa API token so the calendar-service launches bots under
+    // THIS user's identity (per-user concurrency limits + transcript ownership),
+    // not a shared service account. Without it, auto-join cannot act for this user.
+    const tokenResult = await createUserToken(parsedState.userId);
+    if (!tokenResult.success || !tokenResult.data?.token) {
+      return NextResponse.json(
+        {
+          error:
+            tokenResult.error?.message ||
+            "Failed to mint Vexa API token for calendar bot launches",
+        },
+        { status: 500 }
+      );
+    }
+
+    // Preserve other google_calendar sub-fields (e.g. preferences) on reconnect.
+    const existingCalendar =
+      existingData.google_calendar && typeof existingData.google_calendar === "object"
+        ? (existingData.google_calendar as Record<string, unknown>)
         : {};
 
     const updatedData: Record<string, unknown> = {
       ...existingData,
       google_calendar: {
+        ...existingCalendar,
         oauth: {
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
           expires_at: now + tokens.expires_in,
           scope: tokens.scope || "",
         },
+        bot_token: tokenResult.data.token,
       },
     };
 

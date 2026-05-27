@@ -25,7 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-// toast wird pro-Aufruf dynamisch importiert (handleConnect/handleDisconnect)
+import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import { withBasePath } from "@/lib/base-path";
@@ -551,7 +551,6 @@ function GoogleCalendarCard({ userEmail }: { userEmail: string | null }) {
       await startGoogleCalendarOAuth({ userEmail, returnTo: "/meetings" });
       // window.location.assign fires — no further state update needed.
     } catch (error) {
-      const { toast } = await import("sonner");
       toast.error("Failed to start Google Calendar connection", {
         description: (error as Error).message,
       });
@@ -568,10 +567,8 @@ function GoogleCalendarCard({ userEmail }: { userEmail: string | null }) {
       );
       if (!resp.ok) throw new Error(await resp.text());
       setStatus(null);
-      const { toast } = await import("sonner");
       toast.success("Google Calendar disconnected");
     } catch (error) {
-      const { toast } = await import("sonner");
       toast.error("Failed to disconnect", { description: (error as Error).message });
     }
   }
