@@ -477,6 +477,20 @@ export interface RecordingData {
 }
 
 // ==========================================
+// Calendar Event Types (from calendar-service)
+// ==========================================
+
+export interface CalendarEvent {
+  id: number;
+  title: string;
+  start_time: string | null;
+  end_time: string | null;
+  meeting_url: string | null;
+  platform: string | null;
+  status: string; // "pending" | "scheduled" | "cancelled" | "failed"
+}
+
+// ==========================================
 // Admin API Types
 // ==========================================
 

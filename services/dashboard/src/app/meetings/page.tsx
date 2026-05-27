@@ -17,8 +17,9 @@ import {
 import { ErrorState } from "@/components/ui/error-state";
 import { useMeetingsStore } from "@/stores/meetings-store";
 import { useJoinModalStore } from "@/stores/join-modal-store";
-import type { Platform, MeetingStatus, Meeting } from "@/types/vexa";
+import type { Platform, MeetingStatus, Meeting, CalendarEvent } from "@/types/vexa";
 import { getDetailedStatus } from "@/types/vexa";
+import { useAuthStore } from "@/stores/auth-store";
 import { DocsLink } from "@/components/docs/docs-link";
 import { getWebappUrl } from "@/lib/docs/webapp-url";
 import { Input } from "@/components/ui/input";
@@ -51,7 +52,8 @@ function StatusDot({ status }: { status: string }) {
         status === "awaiting_admission" && "bg-amber-400",
         status === "stopping" && "bg-amber-400",
         status === "failed" && "bg-red-400",
-        status === "requested" && "bg-blue-400"
+        status === "requested" && "bg-blue-400",
+        status === "upcoming" && "bg-violet-400"
       )}
     />
   );
@@ -83,11 +85,13 @@ export default function MeetingsPage() {
   const router = useRouter();
   const { meetings, isLoadingMeetings, isLoadingMore, hasMore, fetchMeetings, fetchMoreMeetings, error, subscriptionRequired } = useMeetingsStore();
   const openJoinModal = useJoinModalStore((state) => state.openModal);
+  const user = useAuthStore((state) => state.user);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [platformFilter, setPlatformFilter] = useState<Platform | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<MeetingStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<MeetingStatus | "upcoming" | "all">("all");
   const [isCreatingBrowser, setIsCreatingBrowser] = useState(false);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   // Debounced server-side search
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -95,9 +99,10 @@ export default function MeetingsPage() {
 
   const applyFilters = useCallback((search: string, status: string, platform: string) => {
     filtersRef.current = { search, status, platform };
+    // "upcoming" is a client-only filter (calendar events) — don't send to server
     fetchMeetings({
       search: search || undefined,
-      status: status === "all" ? undefined : status,
+      status: (status === "all" || status === "upcoming") ? undefined : status,
       platform: platform === "all" ? undefined : platform,
     });
   }, [fetchMeetings]);
@@ -138,6 +143,19 @@ export default function MeetingsPage() {
     fetchMeetings();
   }, [fetchMeetings]);
 
+  // Load upcoming calendar events when user is available
+  useEffect(() => {
+    if (!user?.email) return;
+    fetch(withBasePath(`/api/calendar/proxy/events?userEmail=${encodeURIComponent(user.email)}`))
+      .then((r) => (r.ok ? r.json() : { events: [], configured: false }))
+      .then((data: CalendarEvent[] | { events: CalendarEvent[]; configured: boolean }) => {
+        const list: CalendarEvent[] = Array.isArray(data) ? data : (data.events ?? []);
+        // Cancelled events are internal calendar-service state — don't surface them
+        setCalendarEvents(list.filter((e) => e.status !== "cancelled"));
+      })
+      .catch(() => setCalendarEvents([]));
+  }, [user?.email]);
+
   // Re-fetch when dropdown filters change
   useEffect(() => {
     applyFilters(searchQuery, statusFilter, platformFilter);
@@ -153,7 +171,28 @@ export default function MeetingsPage() {
     }, 300);
   }, [applyFilters, statusFilter, platformFilter]);
 
-  const filteredMeetings = meetings;
+  // Build merged rows: real meetings + upcoming calendar events
+  // When statusFilter is "upcoming", show only calendar events.
+  // Otherwise show meetings (server-filtered) plus upcoming events (unless a non-"all" status hides them).
+  const upcomingRows: Meeting[] = useMemo(() => {
+    if (statusFilter !== "all" && statusFilter !== "upcoming") return [];
+    return calendarEvents.map((e): Meeting => ({
+      id: `cal-${e.id}`,
+      platform: (e.platform as Platform) || "google_meet",
+      platform_specific_id: e.meeting_url || "",
+      status: "upcoming" as unknown as MeetingStatus,
+      start_time: e.start_time,
+      end_time: e.end_time,
+      bot_container_id: null,
+      created_at: e.start_time || "",
+      data: { title: e.title, name: e.title, participants: [] },
+    }));
+  }, [calendarEvents, statusFilter]);
+
+  const filteredMeetings: Meeting[] = useMemo(() => {
+    if (statusFilter === "upcoming") return upcomingRows;
+    return [...meetings, ...upcomingRows];
+  }, [meetings, upcomingRows, statusFilter]);
 
   // Infinite scroll
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -252,12 +291,13 @@ export default function MeetingsPage() {
                 <SelectItem value="browser_session">Browser</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as MeetingStatus | "all")}>
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as MeetingStatus | "upcoming" | "all")}>
               <SelectTrigger className="flex-1 min-w-0 sm:w-[130px] lg:w-[150px]">
                 <SelectValue placeholder="All Status" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="upcoming">Upcoming</SelectItem>
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>
                 <SelectItem value="failed">Failed</SelectItem>
@@ -341,14 +381,19 @@ export default function MeetingsPage() {
 
 function MeetingRow({ meeting }: { meeting: Meeting }) {
   const router = useRouter();
-  const statusConfig = getDetailedStatus(meeting.status, meeting.data);
+  const isUpcoming = (meeting.status as string) === "upcoming";
+  const statusConfig = isUpcoming
+    ? { label: "Upcoming", color: "text-violet-400", bgColor: "" }
+    : getDetailedStatus(meeting.status, meeting.data);
   const displayTitle = meeting.data?.name || meeting.data?.title || meeting.platform_specific_id;
   const participants = meeting.data?.participants || [];
 
   return (
       <tr
         className="border-b border-border/50 hover:bg-muted/30 cursor-pointer transition-colors"
-        onClick={() => router.push(`/meetings/${meeting.id}`)}
+        onClick={() => {
+          if (!isUpcoming) router.push(`/meetings/${meeting.id}`);
+        }}
       >
         <td className="hidden sm:table-cell px-5 py-3">
           <PlatformIcon platform={meeting.platform} />
@@ -363,16 +408,8 @@ function MeetingRow({ meeting }: { meeting: Meeting }) {
         </td>
         <td className="px-5 py-3">
           <span className="inline-flex items-center gap-1.5">
-            <StatusDot status={meeting.status} />
-            <span
-              className={cn(
-                "text-xs",
-                (meeting.status === "completed") && "text-emerald-400",
-                (meeting.status === "active" || meeting.status === "joining") && "text-emerald-400",
-                (meeting.status === "awaiting_admission" || meeting.status === "stopping") && "text-amber-400",
-                meeting.status === "failed" && "text-red-400"
-              )}
-            >
+            <StatusDot status={meeting.status as string} />
+            <span className={cn("text-xs", statusConfig.color)}>
               {statusConfig.label}
             </span>
           </span>
