@@ -25,8 +25,10 @@ logger = logging.getLogger("calendar-service.sync")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 MEETING_API_URL = os.getenv("MEETING_API_URL", "http://meeting-api:8080")
-BOT_API_TOKEN = os.getenv("BOT_API_TOKEN", "")
 DEFAULT_LEAD_TIME_MINUTES = int(os.getenv("DEFAULT_LEAD_TIME_MINUTES", "2"))
+# No global bot token: each event's bot launches under its owner's own Vexa API
+# token, resolved per-user from User.data["google_calendar"]["bot_token"]
+# (minted + stored at OAuth-connect time). Multi-tenant by design.
 
 
 async def sync_user_calendar(user_id: int, db: AsyncSession) -> int:
@@ -151,10 +153,20 @@ async def schedule_upcoming_bots(db: AsyncSession) -> int:
     scheduled = 0
 
     for event in events:
-        # Get user's API key for meeting-api auth
+        # Launch the bot under the EVENT OWNER's own Vexa API token — not a shared
+        # service account. Per-user token enforces per-user concurrency limits and
+        # correct transcript ownership. Token is minted + stored at OAuth-connect time.
         user_result = await db.execute(select(User).where(User.id == event.user_id))
         user = user_result.scalar_one_or_none()
         if not user:
+            continue
+
+        bot_token = (user.data or {}).get("google_calendar", {}).get("bot_token")
+        if not bot_token:
+            logger.warning(
+                f"User {event.user_id} has no Vexa bot_token "
+                f"(calendar reconnect needed to mint one) — skipping event {event.id}"
+            )
             continue
 
         try:
@@ -166,7 +178,7 @@ async def schedule_upcoming_bots(db: AsyncSession) -> int:
                         "native_meeting_id": _extract_native_id(event.meeting_url, event.platform),
                         "bot_name": f"Vexa - {event.title or 'Calendar'}",
                     },
-                    headers={"X-API-Key": BOT_API_TOKEN},
+                    headers={"X-API-Key": bot_token},
                     timeout=30,
                 )
 

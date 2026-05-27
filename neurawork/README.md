@@ -22,7 +22,8 @@ Kein offizielles Ship-Datum bekannt — 0.11-Milestone (58 open) listet kein Cal
 1. **Env vorbereiten**:
    ```bash
    cp neurawork/.env.example deploy/compose/.env
-   # Werte für GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, BOT_API_TOKEN eintragen
+   # Werte für GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET eintragen
+   # (KEIN globales BOT_API_TOKEN mehr — siehe "Bot-Auth (multi-tenant)" unten)
    ```
 
 2. **Stack hochfahren** mit Overlay:
@@ -39,9 +40,25 @@ Kein offizielles Ship-Datum bekannt — 0.11-Milestone (58 open) listet kein Cal
    curl http://localhost:8000/calendar/status?user_id=1
    ```
 
+## Bot-Auth (multi-tenant)
+
+Jeder User aktiviert den Calendar-Watcher für sich selbst. Die Autorisierung läuft
+**pro User über die User-Tabelle**, nicht über eine globale Env-Var:
+
+- **Calendar lesen**: Google-OAuth-`refresh_token` in `User.data.google_calendar.oauth`.
+- **Bots launchen**: ein **pro User gemintetes** Vexa-API-Token (Scope `bot,tx,browser`)
+  in `User.data.google_calendar.bot_token`. Beide werden beim Calendar-Connect im
+  Dashboard (`/api/calendar/oauth/complete`) gesetzt.
+
+`sync.py:schedule_upcoming_bots` löst das Token pro Event aus dem Owner-Record auf
+(`X-API-Key`) → Bots laufen unter der Identität des jeweiligen Users (korrekte
+Concurrency-Limits + Transcript-Ownership). Fehlt das `bot_token`, wird der User
+übersprungen (Reconnect nötig) — kein globaler Service-Account.
+
 ## Test-Flow
 
-1. User in `users` DB anlegen + `data` JSONB mit Google OAuth refresh token füllen (Dashboard OAuth-Flow oder manuell)
+1. Calendar via Dashboard-OAuth verbinden → setzt `oauth.refresh_token` **und**
+   `bot_token` in `User.data.google_calendar` (für manuelles Setup beide Felder füllen)
 2. `POST /calendar/connect?user_id=1` → trigger initial sync
 3. `GET /calendar/events?user_id=1` → upcoming events
 4. Calendar-Event mit Meeting-URL erstellen (Zoom/Meet/Teams)
@@ -54,4 +71,4 @@ Siehe `CLAUDE.md` Sync-Section.
 
 ## Production-Deployment
 
-Falls Tests greifen: Calendar-Service in [`nashtrader/vexa-k8s`](https://github.com/nashtrader/vexa-k8s) als eigenes Helm-Template ergänzen — NICHT in diesem Fork. Dieser Fork bleibt Sandbox.
+Falls Tests greifen: Calendar-Service in [`neurawork-git/vexa-k8s`](https://github.com/neurawork-git/vexa-k8s) als eigenes Helm-Template ergänzen — NICHT in diesem Fork. Dieser Fork bleibt Sandbox.
