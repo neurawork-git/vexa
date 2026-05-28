@@ -169,13 +169,18 @@ async def schedule_upcoming_bots(db: AsyncSession) -> int:
             )
             continue
 
+        # Send meeting_url + platform — meeting-api's schema parser handles
+        # native_meeting_id / passcode extraction (incl. Teams URL-decoding,
+        # white-label / enterprise variants). Avoids per-platform regex drift
+        # on this side. See services/meeting-api/meeting_api/schemas.py
+        # `parse_meeting_url_if_provided` + `validate_meeting_or_agent`.
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{MEETING_API_URL}/bots",
                     json={
                         "platform": event.platform,
-                        "native_meeting_id": _extract_native_id(event.meeting_url, event.platform),
+                        "meeting_url": event.meeting_url,
                         "bot_name": f"Vexa - {event.title or 'Calendar'}",
                     },
                     headers={"X-API-Key": bot_token},
@@ -208,16 +213,3 @@ async def schedule_upcoming_bots(db: AsyncSession) -> int:
     return scheduled
 
 
-def _extract_native_id(url: str, platform: str) -> str:
-    """Extract the native meeting ID from a URL for meeting-api."""
-    if platform == "google_meet":
-        # https://meet.google.com/abc-defg-hij -> abc-defg-hij
-        return url.rsplit("/", 1)[-1].split("?")[0]
-    if platform == "zoom":
-        # https://zoom.us/j/123456?pwd=xxx -> 123456
-        import re
-        match = re.search(r"/j/(\d+)", url)
-        return match.group(1) if match else url
-    if platform == "teams":
-        return url
-    return url
