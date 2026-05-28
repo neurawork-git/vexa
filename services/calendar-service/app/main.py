@@ -3,6 +3,7 @@
 import os
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 import uvicorn
 from fastapi import FastAPI, Depends, HTTPException, Query
@@ -119,9 +120,15 @@ async def disconnect_calendar(user_id: int = Query(...), db: AsyncSession = Depe
 @app.get("/calendar/events")
 async def list_events(user_id: int = Query(...), db: AsyncSession = Depends(get_db)):
     """List upcoming calendar events for a user."""
+    now = datetime.now(timezone.utc)
     result = await db.execute(
         select(CalendarEvent)
-        .where(CalendarEvent.user_id == user_id)
+        .where(
+            CalendarEvent.user_id == user_id,
+            CalendarEvent.meeting_id.is_(None),
+            CalendarEvent.start_time > now,
+            CalendarEvent.status != "cancelled",
+        )
         .order_by(CalendarEvent.start_time)
     )
     events = result.scalars().all()
