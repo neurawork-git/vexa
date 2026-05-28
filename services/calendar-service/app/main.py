@@ -120,7 +120,14 @@ async def disconnect_calendar(user_id: int = Query(...), db: AsyncSession = Depe
 @app.get("/calendar/events")
 async def list_events(user_id: int = Query(...), db: AsyncSession = Depends(get_db)):
     """List upcoming calendar events for a user."""
-    now = datetime.now(timezone.utc)
+    # Only return future events without a scheduled bot. Once meeting_id is
+    # set, the meetings-table row owns the display (active/completed/failed);
+    # returning the event here would dupe-render the same meeting as both
+    # "upcoming" (calendar-event) and the real status (meetings-row) — and
+    # the upcoming-row is non-clickable (frontend gates router.push on
+    # !isUpcoming in services/dashboard/src/app/meetings/page.tsx:401),
+    # hiding the real transcript link.
+    now = datetime.now(timezone.utc)  # start_time is DateTime(timezone=True)
     result = await db.execute(
         select(CalendarEvent)
         .where(
