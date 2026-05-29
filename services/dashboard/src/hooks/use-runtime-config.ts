@@ -12,6 +12,7 @@ interface RuntimeConfig {
   authToken?: string | null;
   hostedMode?: boolean;
   webappUrl?: string;
+  microsoftCalendarEnabled?: boolean;
 }
 
 // Global cache to avoid refetching on every component mount

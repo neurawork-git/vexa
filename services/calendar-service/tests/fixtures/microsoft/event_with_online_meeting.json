@@ -1,0 +1,13 @@
+{
+  "id": "AAMkADEvent1",
+  "subject": "Weekly Sync",
+  "isOnlineMeeting": true,
+  "isCancelled": false,
+  "onlineMeeting": {
+    "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc123%40thread.v2/0?context=%7B%22Tid%22%3A%22tenant-id%22%7D"
+  },
+  "start": {"dateTime": "2026-06-01T10:00:00", "timeZone": "UTC"},
+  "end":   {"dateTime": "2026-06-01T11:00:00", "timeZone": "UTC"},
+  "body":  {"contentType": "html", "content": "<html><body>No URL here</body></html>"},
+  "location": {"displayName": "Microsoft Teams Meeting"}
+}

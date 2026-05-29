@@ -30,6 +30,8 @@ import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import { withBasePath } from "@/lib/base-path";
 import { startGoogleCalendarOAuth } from "@/lib/google-calendar-oauth-client";
+import { startMicrosoftCalendarOAuth } from "@/lib/microsoft-calendar-oauth-client";
+import { useRuntimeConfig } from "@/hooks/use-runtime-config";
 
 // ==========================================
 // Types
@@ -506,6 +508,9 @@ export default function ProfilePage() {
       {/* Google Calendar */}
       <GoogleCalendarCard userEmail={user?.email ?? null} />
 
+      {/* Microsoft 365 Calendar — only rendered when MICROSOFT_CLIENT_ID is configured */}
+      <MicrosoftCalendarCard userEmail={user?.email ?? null} />
+
       {/* Git Workspace */}
       <GitWorkspaceCard />
     </div>
@@ -627,6 +632,146 @@ function GoogleCalendarCard({ userEmail }: { userEmail: string | null }) {
               <>
                 <CalendarDays className="h-3.5 w-3.5 mr-1.5" />
                 Connect Google Calendar
+              </>
+            )}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ==========================================
+// Microsoft 365 Calendar Card
+// ==========================================
+
+type MicrosoftCalendarStatus = {
+  microsoft_connected: boolean;
+  microsoft_event_count: number | null;
+  microsoft_last_error: string | null;
+} | null;
+
+function MicrosoftCalendarCard({ userEmail }: { userEmail: string | null }) {
+  const { config } = useRuntimeConfig();
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(true);
+  const [status, setStatus] = useState<MicrosoftCalendarStatus>(null);
+
+  // Card is invisible when MICROSOFT_CLIENT_ID is not configured on the server.
+  if (config && !config.microsoftCalendarEnabled) {
+    return null;
+  }
+
+  useEffect(() => {
+    if (!userEmail) {
+      setIsLoadingStatus(false);
+      return;
+    }
+    fetch(withBasePath(`/api/calendar/proxy/status?userEmail=${encodeURIComponent(userEmail)}`))
+      .then(async (r) => {
+        if (!r.ok) return;
+        const data = await r.json();
+        setStatus({
+          microsoft_connected: Boolean(data.microsoft_connected),
+          microsoft_event_count:
+            typeof data.microsoft_event_count === "number" ? data.microsoft_event_count : null,
+          microsoft_last_error: data.microsoft_last_error ?? null,
+        });
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingStatus(false));
+  }, [userEmail]);
+
+  async function handleConnect() {
+    if (!userEmail) return;
+    setIsConnecting(true);
+    try {
+      await startMicrosoftCalendarOAuth({ userEmail, returnTo: "/meetings" });
+    } catch (error) {
+      toast.error("Failed to start Microsoft Calendar connection", {
+        description: (error as Error).message,
+      });
+      setIsConnecting(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!userEmail) return;
+    try {
+      const resp = await fetch(
+        withBasePath(`/api/calendar/microsoft/disconnect?userEmail=${encodeURIComponent(userEmail)}`),
+        { method: "DELETE" }
+      );
+      if (!resp.ok) throw new Error(await resp.text());
+      setStatus(null);
+      toast.success("Microsoft 365 Calendar disconnected");
+    } catch (error) {
+      toast.error("Failed to disconnect", { description: (error as Error).message });
+    }
+  }
+
+  const connected = status?.microsoft_connected ?? false;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CalendarDays className="h-5 w-5" />
+          Microsoft 365 Calendar
+          {!isLoadingStatus && connected && (
+            <CheckCircle2 className="h-4 w-4 text-green-500" />
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Connect your Microsoft 365 Calendar to automatically join upcoming meetings without manual bot invites.
+        </p>
+
+        {status?.microsoft_last_error === "admin_consent_required" && (
+          <p className="text-sm text-amber-600 dark:text-amber-400">
+            Admin consent for Calendars.ReadWrite is required. Ask your Azure tenant administrator to grant consent.
+          </p>
+        )}
+
+        {isLoadingStatus ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">Checking status…</span>
+          </div>
+        ) : connected ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm">
+              <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+              <span className="text-green-600 dark:text-green-400 font-medium">Connected</span>
+              {status?.microsoft_event_count !== null &&
+                status?.microsoft_event_count !== undefined && (
+                  <span className="text-muted-foreground">
+                    — {status.microsoft_event_count} upcoming event
+                    {status.microsoft_event_count !== 1 ? "s" : ""} synced
+                  </span>
+                )}
+            </div>
+            <Button size="sm" variant="outline" onClick={handleDisconnect}>
+              Disconnect
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            data-testid="microsoft-calendar-connect-btn"
+            onClick={handleConnect}
+            disabled={isConnecting || !userEmail || isLoadingStatus}
+          >
+            {isConnecting ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
+                Redirecting…
+              </>
+            ) : (
+              <>
+                <CalendarDays className="h-3.5 w-3.5 mr-1.5" />
+                Connect Microsoft 365 Calendar
               </>
             )}
           </Button>

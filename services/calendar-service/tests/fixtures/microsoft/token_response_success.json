@@ -1,0 +1,7 @@
+{
+  "token_type": "Bearer",
+  "scope": "Calendars.ReadWrite User.Read",
+  "expires_in": 3600,
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.test_access_token",
+  "refresh_token": "0.AXoA_new_rotated_refresh_token_from_microsoft"
+}

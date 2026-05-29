@@ -1,0 +1,14 @@
+{
+  "id": "AAMkADEvent3",
+  "subject": "Zoom call",
+  "isOnlineMeeting": false,
+  "isCancelled": false,
+  "onlineMeeting": null,
+  "start": {"dateTime": "2026-06-03T09:00:00", "timeZone": "UTC"},
+  "end":   {"dateTime": "2026-06-03T09:30:00", "timeZone": "UTC"},
+  "body":  {
+    "contentType": "html",
+    "content": "<p>Zoom: https://zoom.us/j/98765432100?pwd=abc123</p>"
+  },
+  "location": {"displayName": ""}
+}

@@ -47,6 +47,10 @@ export async function GET(request: NextRequest) {
     ? explicitPublicApi
     : `${request.headers.get('x-forwarded-proto') || 'http'}://${host.replace(/:\d+$/, '')}:${gatewayPort}`;
 
+  // Feature flag: Microsoft Calendar card is only shown when the server has credentials.
+  // Read at runtime (not build time) so the same image works for all deployments.
+  const microsoftCalendarEnabled = !!process.env.MICROSOFT_CLIENT_ID;
+
   return NextResponse.json({
     wsUrl,
     apiUrl,
@@ -56,5 +60,6 @@ export async function GET(request: NextRequest) {
     defaultBotName,
     hostedMode,
     webappUrl,
+    microsoftCalendarEnabled,
   });
 }

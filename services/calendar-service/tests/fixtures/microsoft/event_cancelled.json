@@ -1,0 +1,11 @@
+{
+  "id": "AAMkADEvent4",
+  "subject": "Cancelled Meeting",
+  "isOnlineMeeting": true,
+  "isCancelled": true,
+  "onlineMeeting": {"joinUrl": "https://teams.microsoft.com/l/meetup-join/cancelled"},
+  "start": {"dateTime": "2026-06-04T10:00:00", "timeZone": "UTC"},
+  "end":   {"dateTime": "2026-06-04T11:00:00", "timeZone": "UTC"},
+  "body":  {"contentType": "html", "content": ""},
+  "location": {"displayName": ""}
+}

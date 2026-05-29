@@ -1,0 +1,4 @@
+{
+  "error": "invalid_grant",
+  "error_description": "AADSTS70008: The provided authorization code or refresh token has expired. Token has expired, please reissue the authorization code."
+}

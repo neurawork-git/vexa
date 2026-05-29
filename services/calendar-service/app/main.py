@@ -1,4 +1,4 @@
-"""Calendar Service — Google Calendar sync + bot scheduling."""
+"""Calendar Service — Google Calendar + Microsoft 365 sync + bot scheduling."""
 
 import os
 import asyncio
@@ -13,7 +13,8 @@ from sqlalchemy import select
 from meeting_api.database import get_db, init_db
 from meeting_api.models import CalendarEvent
 from admin_models.models import User
-from app.sync import sync_user_calendar, schedule_upcoming_bots
+from app.sync import sync_user_calendar_google, sync_user_calendar_microsoft, schedule_upcoming_bots
+from app import microsoft_calendar
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "300"))
@@ -25,7 +26,7 @@ _VEXA_ENV = os.getenv("VEXA_ENV", "development")
 _PUBLIC_DOCS = _VEXA_ENV != "production"
 app = FastAPI(
     title="Calendar Service",
-    description="Google Calendar sync and auto-join scheduling",
+    description="Google Calendar + Microsoft 365 sync and auto-join scheduling",
     docs_url="/docs" if _PUBLIC_DOCS else None,
     redoc_url="/redoc" if _PUBLIC_DOCS else None,
     openapi_url="/openapi.json" if _PUBLIC_DOCS else None,
@@ -39,23 +40,26 @@ async def startup():
 
 
 async def sync_loop():
-    """Background loop: sync all connected calendars and schedule bots."""
+    """Background loop: sync all connected calendars (Google + Microsoft) and schedule bots."""
     while True:
         try:
             from meeting_api.database import async_session_local
             async with async_session_local() as db:
-                # Find all users with google_calendar oauth configured
                 result = await db.execute(select(User))
                 users = result.scalars().all()
                 for user in users:
-                    gc = (user.data or {}).get("google_calendar", {})
-                    if gc.get("oauth", {}).get("refresh_token"):
+                    data = user.data or {}
+                    if data.get("google_calendar", {}).get("oauth", {}).get("refresh_token"):
                         try:
-                            await sync_user_calendar(user.id, db)
+                            await sync_user_calendar_google(user.id, db)
                         except Exception as e:
-                            logger.error(f"Sync failed for user {user.id}: {e}")
+                            logger.error(f"Google sync failed user {user.id}: {e}")
+                    if data.get("microsoft_calendar", {}).get("oauth", {}).get("refresh_token"):
+                        try:
+                            await sync_user_calendar_microsoft(user.id, db)
+                        except Exception as e:
+                            logger.error(f"Microsoft sync failed user {user.id}: {e}")
 
-                # Schedule bots for upcoming events
                 await schedule_upcoming_bots(db)
         except Exception as e:
             logger.error(f"Sync loop error: {e}")
@@ -68,40 +72,60 @@ async def health():
     return {"status": "ok", "service": "calendar-service"}
 
 
+# ============================================================
+# Google Calendar endpoints
+# ============================================================
+
 @app.post("/calendar/connect")
 async def connect_calendar(user_id: int = Query(...), db: AsyncSession = Depends(get_db)):
-    """Trigger initial sync after OAuth connection."""
-    count = await sync_user_calendar(user_id, db)
+    """Trigger initial Google Calendar sync after OAuth connection."""
+    count = await sync_user_calendar_google(user_id, db)
     return {"status": "connected", "events_synced": count}
 
 
 @app.get("/calendar/status")
 async def calendar_status(user_id: int = Query(...), db: AsyncSession = Depends(get_db)):
-    """Check if user has calendar connected."""
+    """Check calendar connection status for both Google and Microsoft."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     gc = (user.data or {}).get("google_calendar", {})
-    connected = bool(gc.get("oauth", {}).get("refresh_token"))
+    mc = (user.data or {}).get("microsoft_calendar", {})
 
-    event_count = 0
-    if connected:
+    google_connected = bool(gc.get("oauth", {}).get("refresh_token"))
+    ms_connected = bool(mc.get("oauth", {}).get("refresh_token"))
+
+    google_event_count = 0
+    ms_event_count = 0
+    if google_connected or ms_connected:
         count_result = await db.execute(
             select(CalendarEvent).where(CalendarEvent.user_id == user_id)
         )
-        event_count = len(count_result.scalars().all())
+        all_events = count_result.scalars().all()
+        google_event_count = sum(
+            1 for e in all_events if not (e.external_event_id or "").startswith("microsoft:")
+        )
+        ms_event_count = sum(
+            1 for e in all_events if (e.external_event_id or "").startswith("microsoft:")
+        )
 
     return {
-        "connected": connected,
-        "event_count": event_count,
+        "connected": google_connected,            # existing — Google
+        "event_count": google_event_count,        # existing — Google
+        "microsoft_connected": ms_connected,      # NEW
+        "microsoft_event_count": ms_event_count,  # NEW
+        "microsoft_configured": microsoft_calendar.is_configured(),  # NEW: dashboard reads for card-render
+        "microsoft_last_error": mc.get("last_error"),                # NEW
     }
+    # Additive shape — existing 'connected' + 'event_count' stay Google-scoped.
+    # Refactor to nested {google:{...}, microsoft:{...}} is a follow-up.
 
 
 @app.delete("/calendar/disconnect")
 async def disconnect_calendar(user_id: int = Query(...), db: AsyncSession = Depends(get_db)):
-    """Remove OAuth tokens and stop syncing."""
+    """Remove Google OAuth tokens and stop syncing."""
     from sqlalchemy import update
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -179,6 +203,37 @@ async def update_preferences(
     )
     await db.commit()
     return {"status": "updated", "preferences": gc["preferences"]}
+
+
+# ============================================================
+# Microsoft 365 Calendar endpoints
+# ============================================================
+
+@app.post("/calendar/microsoft/connect")
+async def connect_microsoft_calendar(user_id: int = Query(...), db: AsyncSession = Depends(get_db)):
+    """Trigger initial Microsoft 365 Calendar sync after OAuth connection."""
+    if not microsoft_calendar.is_configured():
+        raise HTTPException(status_code=503, detail="Microsoft Calendar is not configured on this server")
+    count = await sync_user_calendar_microsoft(user_id, db)
+    return {"status": "connected", "events_synced": count}
+
+
+@app.delete("/calendar/microsoft/disconnect")
+async def disconnect_microsoft_calendar(user_id: int = Query(...), db: AsyncSession = Depends(get_db)):
+    """Remove Microsoft OAuth tokens and stop syncing."""
+    from sqlalchemy import update
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_data = dict(user.data or {})
+    user_data.pop("microsoft_calendar", None)
+    await db.execute(
+        update(User).where(User.id == user_id).values(data=user_data)
+    )
+    await db.commit()
+    return {"status": "disconnected"}
 
 
 if __name__ == "__main__":
