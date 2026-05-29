@@ -1,4 +1,4 @@
-"""Calendar sync loop — polls Google Calendar, upserts events, schedules bots."""
+"""Calendar sync loop — polls Google + Microsoft Calendar, upserts events, schedules bots."""
 
 import os
 import logging
@@ -19,19 +19,22 @@ from app.google_calendar import (
     detect_platform,
     parse_event_time,
 )
+from app import microsoft_calendar
 
 logger = logging.getLogger("calendar-service.sync")
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "")
+MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET", "")
 MEETING_API_URL = os.getenv("MEETING_API_URL", "http://meeting-api:8080")
 DEFAULT_LEAD_TIME_MINUTES = int(os.getenv("DEFAULT_LEAD_TIME_MINUTES", "2"))
 # No global bot token: each event's bot launches under its owner's own Vexa API
-# token, resolved per-user from User.data["google_calendar"]["bot_token"]
+# token, resolved per-user from User.data["<provider>_calendar"]["bot_token"]
 # (minted + stored at OAuth-connect time). Multi-tenant by design.
 
 
-async def sync_user_calendar(user_id: int, db: AsyncSession) -> int:
+async def sync_user_calendar_google(user_id: int, db: AsyncSession) -> int:
     """Sync a single user's Google Calendar events. Returns count of upserted events."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -131,7 +134,139 @@ async def sync_user_calendar(user_id: int, db: AsyncSession) -> int:
         )
 
     await db.commit()
-    logger.info(f"Synced {upserted} events for user {user_id}")
+    logger.info(f"Synced {upserted} Google events for user {user_id}")
+    return upserted
+
+
+async def sync_user_calendar_microsoft(user_id: int, db: AsyncSession) -> int:
+    """Sync a single user's Microsoft 365 Calendar events. Returns count of upserted events.
+
+    Dormant until MICROSOFT_CLIENT_ID + MICROSOFT_CLIENT_SECRET are configured.
+    Safe to call unconditionally — exits immediately if not configured.
+    """
+    if not microsoft_calendar.is_configured():
+        return 0
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        logger.warning(f"User {user_id} not found")
+        return 0
+
+    user_data = user.data or {}
+    mc_data = user_data.get("microsoft_calendar", {})
+    oauth = mc_data.get("oauth", {})
+    refresh_token = oauth.get("refresh_token")
+    if not refresh_token:
+        logger.info(f"User {user_id} has no Microsoft Calendar refresh token")
+        return 0
+
+    # Refresh access token.
+    # CRITICAL: Microsoft rotates the refresh_token on every refresh call.
+    # Persist the new token BEFORE any further API calls to avoid losing access
+    # if the process crashes mid-sync.
+    try:
+        access_token, new_refresh_token, expires_in = await microsoft_calendar.refresh_access_token(
+            MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, refresh_token
+        )
+    except microsoft_calendar.MicrosoftRefreshTokenExpired:
+        logger.warning(
+            f"Microsoft refresh token expired for user {user_id} — user must reconnect calendar"
+        )
+        return 0
+    except microsoft_calendar.MicrosoftAccessTokenExpired:
+        logger.error(f"Microsoft access token expired unexpectedly for user {user_id}")
+        return 0
+
+    # Persist rotated refresh token before any further API calls
+    oauth["refresh_token"] = new_refresh_token
+    mc_data["oauth"] = oauth
+    user_data["microsoft_calendar"] = mc_data
+    await db.execute(update(User).where(User.id == user_id).values(data=user_data))
+    await db.commit()
+
+    time_min = datetime.now(timezone.utc)
+    time_max = time_min + timedelta(days=7)
+
+    try:
+        api_response = await microsoft_calendar.list_events(
+            access_token,
+            time_min=time_min,
+            time_max=time_max,
+        )
+    except microsoft_calendar.MicrosoftPermissionDenied:
+        logger.warning(
+            f"Microsoft Graph permission denied for user {user_id} — "
+            "likely missing tenant admin consent for Calendars.ReadWrite"
+        )
+        mc_data["last_error"] = "admin_consent_required"
+        user_data["microsoft_calendar"] = mc_data
+        await db.execute(update(User).where(User.id == user_id).values(data=user_data))
+        await db.commit()
+        return 0
+    except microsoft_calendar.MicrosoftAccessTokenExpired:
+        logger.error(f"Microsoft access token expired mid-sync for user {user_id}")
+        return 0
+
+    events = api_response.get("value", [])
+    upserted = 0
+
+    for event in events:
+        event_id = event.get("id")
+        if not event_id:
+            continue
+
+        # isCancelled is the Graph API cancelled-event signal
+        if event.get("isCancelled"):
+            # Use prefixed ID for namespace isolation against Google event IDs
+            prefixed_id = f"microsoft:{event_id}"
+            await db.execute(
+                update(CalendarEvent)
+                .where(
+                    CalendarEvent.user_id == user_id,
+                    CalendarEvent.external_event_id == prefixed_id,
+                )
+                .values(status="cancelled")
+            )
+            continue
+
+        start_time = microsoft_calendar.parse_event_time(event, "start")
+        if not start_time:
+            continue  # All-day event (no dateTime), skip
+
+        end_time = microsoft_calendar.parse_event_time(event, "end")
+        meeting_url = microsoft_calendar.extract_meeting_url(event)
+        platform = detect_platform(meeting_url) if meeting_url else None
+
+        # Prefix external_event_id with "microsoft:" for namespace isolation —
+        # Microsoft and Google event IDs can collide in the calendar_events table
+        # (uq_calendar_event_user_ext_id constraint is per user+external_event_id).
+        prefixed_id = f"microsoft:{event_id}"
+
+        stmt = pg_insert(CalendarEvent).values(
+            user_id=user_id,
+            external_event_id=prefixed_id,
+            title=event.get("subject", ""),
+            start_time=start_time,
+            end_time=end_time,
+            meeting_url=meeting_url,
+            platform=platform,
+            status="pending",
+        ).on_conflict_do_update(
+            constraint="uq_calendar_event_user_ext_id",
+            set_={
+                "title": event.get("subject", ""),
+                "start_time": start_time,
+                "end_time": end_time,
+                "meeting_url": meeting_url,
+                "platform": platform,
+            },
+        )
+        await db.execute(stmt)
+        upserted += 1
+
+    await db.commit()
+    logger.info(f"Synced {upserted} Microsoft events for user {user_id}")
     return upserted
 
 
@@ -161,7 +296,14 @@ async def schedule_upcoming_bots(db: AsyncSession) -> int:
         if not user:
             continue
 
-        bot_token = (user.data or {}).get("google_calendar", {}).get("bot_token")
+        data = user.data or {}
+        bot_token = (
+            data.get("google_calendar", {}).get("bot_token")
+            or data.get("microsoft_calendar", {}).get("bot_token")
+        )
+        # Multi-provider users have bot_token under whichever provider they
+        # connected first. Fallback chain keeps single-provider users working.
+        # Issue B will replace this with per-event provider-aware token resolution.
         if not bot_token:
             logger.warning(
                 f"User {event.user_id} has no Vexa bot_token "
@@ -211,5 +353,3 @@ async def schedule_upcoming_bots(db: AsyncSession) -> int:
 
     await db.commit()
     return scheduled
-
-

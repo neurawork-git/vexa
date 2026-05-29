@@ -1,0 +1,14 @@
+{
+  "id": "AAMkADEvent2",
+  "subject": "Teams via body",
+  "isOnlineMeeting": false,
+  "isCancelled": false,
+  "onlineMeeting": null,
+  "start": {"dateTime": "2026-06-02T14:00:00", "timeZone": "UTC"},
+  "end":   {"dateTime": "2026-06-02T15:00:00", "timeZone": "UTC"},
+  "body":  {
+    "contentType": "html",
+    "content": "<html><body>Join here: <a href=\"https://teams.microsoft.com/l/meetup-join/19%3Ameeting_xyz%40thread.v2/0?context=%7B%7D\">Teams link</a></body></html>"
+  },
+  "location": {"displayName": ""}
+}
