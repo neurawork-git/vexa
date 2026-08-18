@@ -28,6 +28,7 @@ All endpoints accept `user_id` as a query parameter.
 1. Users connect their Google Calendar via OAuth (refresh token stored in the `users.data` JSONB column).
 2. A background loop syncs calendar events for all connected users at a regular interval.
 3. For events with meeting URLs (Zoom, Teams, Meet), bots are scheduled to join automatically based on user preferences (auto-join enabled, lead time in minutes).
+4. One meeting gets exactly one bot, org-wide. When several users hold the same meeting in their calendars, the event of the lowest user id wins and the twins are stamped `duplicate` instead of each spawning their own bot (`app/dedupe.py`).
 
 ## How
 
