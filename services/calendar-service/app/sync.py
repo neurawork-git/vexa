@@ -20,6 +20,7 @@ from app.google_calendar import (
     parse_event_time,
 )
 from app import microsoft_calendar
+from app.dedupe import dedupe_key
 
 logger = logging.getLogger("calendar-service.sync")
 
@@ -275,19 +276,52 @@ async def schedule_upcoming_bots(db: AsyncSession) -> int:
     now = datetime.now(timezone.utc)
     cutoff = now + timedelta(minutes=DEFAULT_LEAD_TIME_MINUTES)
 
+    window = (
+        CalendarEvent.start_time <= cutoff,
+        CalendarEvent.start_time >= now - timedelta(minutes=5),
+        CalendarEvent.meeting_url.isnot(None),
+        CalendarEvent.platform.isnot(None),
+    )
+
     result = await db.execute(
-        select(CalendarEvent).where(
-            CalendarEvent.status == "pending",
-            CalendarEvent.start_time <= cutoff,
-            CalendarEvent.start_time >= now - timedelta(minutes=5),
-            CalendarEvent.meeting_url.isnot(None),
-            CalendarEvent.platform.isnot(None),
-        )
+        select(CalendarEvent)
+        .where(CalendarEvent.status == "pending", *window)
+        # Deterministic winner when two users hold the same meeting: lowest user_id,
+        # then lowest event id. Without an explicit order the winner flips between
+        # ticks and the transcript owner becomes random.
+        .order_by(CalendarEvent.user_id, CalendarEvent.id)
     )
     events = result.scalars().all()
+
+    # A duplicate can arrive one tick later than its twin, so the claimed set must
+    # survive across ticks — it is seeded from what is already scheduled in the same
+    # window (the twin of a meeting carries the same start_time by definition).
+    claimed_result = await db.execute(
+        select(CalendarEvent.platform, CalendarEvent.meeting_url)
+        .where(CalendarEvent.status == "scheduled", *window)
+    )
+    claimed = {
+        key
+        for platform, url in claimed_result.all()
+        if (key := dedupe_key(platform, url)) is not None
+    }
+
     scheduled = 0
 
     for event in events:
+        key = dedupe_key(event.platform, event.meeting_url)
+        if key in claimed:
+            logger.info(
+                f"Skipping event {event.id} (user {event.user_id}): another user's "
+                f"calendar already sent a bot to {event.meeting_url}"
+            )
+            await db.execute(
+                update(CalendarEvent)
+                .where(CalendarEvent.id == event.id)
+                .values(status="duplicate")
+            )
+            continue
+
         # Launch the bot under the EVENT OWNER's own Vexa API token — not a shared
         # service account. Per-user token enforces per-user concurrency limits and
         # correct transcript ownership. Token is minted + stored at OAuth-connect time.
@@ -340,6 +374,7 @@ async def schedule_upcoming_bots(db: AsyncSession) -> int:
                     )
                 )
                 scheduled += 1
+                claimed.add(key)
                 logger.info(f"Scheduled bot for event {event.id}: {event.title}")
             else:
                 logger.error(f"Bot request failed for event {event.id}: {resp.status_code} {resp.text}")
