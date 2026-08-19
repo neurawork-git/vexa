@@ -506,6 +506,9 @@ def _attach_background_loops(
     # self-host opt-in that chooses the uncapped mode (never defaulted).
     from .bot_spawn.env_flags import env_flag
     auto_join_allow_uncapped = env_flag("AUTO_JOIN_ALLOW_UNCAPPED", default=False)
+    # Single-org self-host: one meeting gets one bot even when several users hold it in
+    # their calendars. Off by default — a hosted tenant wants a transcript per user.
+    auto_join_org_wide_dedupe = env_flag("AUTO_JOIN_ORG_WIDE_DEDUPE", default=False)
 
     async def _auto_join_loop() -> None:
         if meeting_repo is None or runtime is None or not hasattr(meeting_repo, "list_scheduled_meetings"):
@@ -551,6 +554,7 @@ def _attach_background_loops(
                 token_secret=os.getenv("ADMIN_TOKEN") or None,
                 redis_url=os.getenv("REDIS_URL"),
                 allow_uncapped=auto_join_allow_uncapped,
+                org_wide_dedupe=auto_join_org_wide_dedupe,
             )
 
         while True:

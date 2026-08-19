@@ -50,9 +50,19 @@ def _parse_iso(value: Any) -> Optional[datetime]:
 
 
 def due_rows(rows: list[dict], *, now: datetime,
-             lead_s: float = DEFAULT_LEAD_S, grace_s: float = DEFAULT_GRACE_S) -> list[dict]:
+             lead_s: float = DEFAULT_LEAD_S, grace_s: float = DEFAULT_GRACE_S,
+             org_wide_dedupe: bool = False) -> list[dict]:
     """The PURE due-filter over ``scheduled`` rows: auto_join on (absent = on), a joinable link,
-    ``scheduled_at`` inside [start - lead, start + grace], and past any error backoff."""
+    ``scheduled_at`` inside [start - lead, start + grace], and past any error backoff.
+
+    ``org_wide_dedupe`` additionally collapses the SAME meeting held by DIFFERENT users down to
+    one row. Stock behaviour (the default) is per-user: dedup and the unique active index are
+    keyed ``(user_id, platform, platform_specific_id)``, and the spawn lock is
+    ``pg_advisory_xact_lock(user_id)`` — so when two colleagues both connect the calendar that
+    carries the same company meeting, each gets their own bot and the meeting gets two
+    participants. That is correct for a hosted tenant where each user owns their own transcript,
+    and wrong for a single-org self-host, which is why this is a deployment opt-in
+    (``AUTO_JOIN_ORG_WIDE_DEDUPE=1``) rather than a change of default."""
     due: list[dict] = []
     for row in rows:
         data = row.get("data") if isinstance(row.get("data"), dict) else {}
@@ -69,7 +79,21 @@ def due_rows(rows: list[dict], *, now: datetime,
         if retry_at is not None and now < retry_at:
             continue
         due.append(row)
-    return due
+
+    if not org_wide_dedupe:
+        return due
+
+    # Deterministic winner: lowest user_id, then lowest row id. Without an explicit order the
+    # winner flips between sweeps and the transcript owner becomes random.
+    claimed: set[tuple[str, str]] = set()
+    collapsed: list[dict] = []
+    for row in sorted(due, key=lambda r: (r.get("user_id") or 0, r.get("id") or 0)):
+        key = (str(row.get("platform")), str(row.get("native_meeting_id")))
+        if key in claimed:
+            continue
+        claimed.add(key)
+        collapsed.append(row)
+    return collapsed
 
 
 def _production_transcribe_gate() -> Optional[str]:
@@ -107,6 +131,7 @@ async def auto_join_tick(
     token_secret: Optional[str] = None,
     redis_url: Optional[str] = None,
     allow_uncapped: bool = False,
+    org_wide_dedupe: bool = False,
 ) -> dict:
     """One sweep: spawn every due scheduled meeting. Returns counters for observability:
     ``{"due": n, "spawned": n, "already": n, "errors": n, "skipped_uncapped": n}``.
@@ -129,8 +154,12 @@ async def auto_join_tick(
     gate = transcribe_gate if transcribe_gate is not None else _production_transcribe_gate
 
     rows = await repo.list_scheduled_meetings()
-    due = due_rows(rows, now=now, lead_s=lead_s, grace_s=grace_s)
+    due = due_rows(rows, now=now, lead_s=lead_s, grace_s=grace_s, org_wide_dedupe=org_wide_dedupe)
     counters = {"due": len(due), "spawned": 0, "already": 0, "errors": 0, "skipped_uncapped": 0}
+    # ponytail: the collapse spans ONE sweep. Twins share a start time, so they normally fall due
+    # together and this catches them; a twin imported by a later calendar sync inside the grace
+    # window still spawns a second bot. Closing that needs the repo to expose other users' active
+    # meetings for the same (platform, native) — do it if the grace-window case ever shows up.
     ctx_cache: dict[int, Optional[dict]] = {}
     uncapped_warned = False
 

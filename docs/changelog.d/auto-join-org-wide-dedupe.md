@@ -1,0 +1,1 @@
+feat(auto-join): `AUTO_JOIN_ORG_WIDE_DEDUPE=1` collapses the same meeting held by several users down to one bot, for single-org self-hosts. Off by default -- per-user dedup (`uq_meeting_active_user_platform_native`) stays the contract for hosted tenants.
