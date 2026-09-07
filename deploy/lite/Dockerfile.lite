@@ -140,7 +140,15 @@ WORKDIR /app/vexa-bot
 RUN npm ci --omit=dev 2>/dev/null || npm install \
     && npm run build
 RUN npx playwright install msedge --with-deps || true
+# `|| true`: der Bundle-Build darf den Image-Build nicht kippen (Upstream-Verhalten).
+# Der grep danach macht daraus trotzdem einen harten Fehler, wenn das Bundle fehlt
+# oder unvollstaendig ist: ohne selectPerSpeakerAudioStream faellt die Teams-
+# Per-Speaker-Transkription auf ihre Inline-Kopie zurueck, und ein Bundle-Defekt
+# waere im laufenden Betrieb nur an einer Log-Warnung zu erkennen.
 RUN node build-browser-utils.js || true
+RUN test -f dist/browser-utils.global.js \
+    && grep -q selectPerSpeakerAudioStream dist/browser-utils.global.js \
+    || (echo "browser-utils.global.js fehlt oder ist unvollstaendig" >&2; exit 1)
 
 # -----------------------------------------------------------------------------
 # Dashboard Build (Next.js)
