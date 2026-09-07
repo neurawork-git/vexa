@@ -42,6 +42,22 @@ export interface TranscriptionClientConfig {
   /** Minimum silence duration (ms) for VAD to split segments. Lower = more splits at natural pauses.
    *  Default: server default (160ms). Use ~100ms for more granular segments. */
   minSilenceDurationMs?: number;
+  /** Model name sent in the multipart form. Default: "whisper-1".
+   *  Azure routes by deployment name in the URL and ignores this field, but it
+   *  stays required by the OpenAI-compatible contract. */
+  model?: string;
+  /** Response format. Default: "verbose_json" (segments + word timestamps).
+   *  The gpt-4o(-mini)-transcribe models reject verbose_json and need "json",
+   *  which returns full text only — speaker-streams then confirms on full text
+   *  instead of per-segment. */
+  responseFormat?: "verbose_json" | "json" | "text";
+  /** Request word-level timestamps. Default: true.
+   *  Only meaningful with verbose_json; harmless but pointless otherwise. */
+  wordTimestamps?: boolean;
+  /** Send the VAD tuning fields (max_speech_duration_s / min_silence_duration_ms).
+   *  Default: true. These are whisper-server extensions that OpenAI-compatible
+   *  hosted backends ignore. */
+  sendVadTuning?: boolean;
 }
 
 /**
@@ -57,6 +73,10 @@ export class TranscriptionClient {
   private sampleRate: number;
   private maxSpeechDurationSec: number | undefined;
   private minSilenceDurationMs: number | undefined;
+  private model: string;
+  private responseFormat: "verbose_json" | "json" | "text";
+  private wordTimestamps: boolean;
+  private sendVadTuning: boolean;
   constructor(config: TranscriptionClientConfig) {
     // Ensure serviceUrl ends with the transcriptions endpoint
     this.serviceUrl = config.serviceUrl.replace(/\/+$/, '');
@@ -69,6 +89,10 @@ export class TranscriptionClient {
     this.sampleRate = config.sampleRate ?? 16000;
     this.maxSpeechDurationSec = config.maxSpeechDurationSec;
     this.minSilenceDurationMs = config.minSilenceDurationMs;
+    this.model = config.model ?? 'whisper-1';
+    this.responseFormat = config.responseFormat ?? 'verbose_json';
+    this.wordTimestamps = config.wordTimestamps ?? true;
+    this.sendVadTuning = config.sendVadTuning ?? true;
   }
 
   /**
@@ -126,14 +150,14 @@ export class TranscriptionClient {
     parts.push(Buffer.from(
       `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="model"\r\n\r\n` +
-      `whisper-1\r\n`
+      `${this.model}\r\n`
     ));
 
     // Response format part
     parts.push(Buffer.from(
       `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="response_format"\r\n\r\n` +
-      `verbose_json\r\n`
+      `${this.responseFormat}\r\n`
     ));
 
     // Language part (if specified)
@@ -145,15 +169,18 @@ export class TranscriptionClient {
       ));
     }
 
-    // Request word-level timestamps
-    parts.push(Buffer.from(
-      `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="timestamp_granularities"\r\n\r\n` +
-      `word\r\n`
-    ));
+    // Request word-level timestamps. Only verbose_json carries them, and the
+    // transcribe models reject the field outright, so it is opt-out.
+    if (this.wordTimestamps) {
+      parts.push(Buffer.from(
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="timestamp_granularities"\r\n\r\n` +
+        `word\r\n`
+      ));
+    }
 
     // Max speech segment duration (controls how often Whisper splits segments)
-    if (this.maxSpeechDurationSec !== undefined) {
+    if (this.sendVadTuning && this.maxSpeechDurationSec !== undefined) {
       parts.push(Buffer.from(
         `--${boundary}\r\n` +
         `Content-Disposition: form-data; name="max_speech_duration_s"\r\n\r\n` +
@@ -162,7 +189,7 @@ export class TranscriptionClient {
     }
 
     // Min silence duration for VAD segment splitting (lower = more splits at natural pauses)
-    if (this.minSilenceDurationMs !== undefined) {
+    if (this.sendVadTuning && this.minSilenceDurationMs !== undefined) {
       parts.push(Buffer.from(
         `--${boundary}\r\n` +
         `Content-Disposition: form-data; name="min_silence_duration_ms"\r\n\r\n` +

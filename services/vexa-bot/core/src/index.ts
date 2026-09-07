@@ -1268,8 +1268,23 @@ async function initPerSpeakerPipeline(botConfig: BotConfig): Promise<boolean> {
       apiToken: botConfig.transcriptionServiceToken || process.env.TRANSCRIPTION_SERVICE_TOKEN,
       maxSpeechDurationSec: process.env.MAX_SPEECH_DURATION_SEC ? parseFloat(process.env.MAX_SPEECH_DURATION_SEC) : undefined,
       minSilenceDurationMs: process.env.MIN_SILENCE_DURATION_MS ? parseInt(process.env.MIN_SILENCE_DURATION_MS) : 100,
+      // Request shape follows the backend, not the image. Whisper-compatible
+      // endpoints keep the defaults; the Azure gpt-4o(-mini)-transcribe models
+      // reject verbose_json and the VAD tuning fields, so those are switched
+      // off through the environment rather than through a rebuild.
+      model: process.env.TRANSCRIPTION_MODEL || undefined,
+      responseFormat: (process.env.TRANSCRIPTION_RESPONSE_FORMAT as any) || undefined,
+      wordTimestamps: process.env.TRANSCRIPTION_WORD_TIMESTAMPS
+        ? process.env.TRANSCRIPTION_WORD_TIMESTAMPS === 'true'
+        : undefined,
+      sendVadTuning: process.env.TRANSCRIPTION_SEND_VAD_TUNING
+        ? process.env.TRANSCRIPTION_SEND_VAD_TUNING === 'true'
+        : undefined,
     });
-    log('[PerSpeaker] TranscriptionClient created');
+    log(
+      `[PerSpeaker] TranscriptionClient created (model=${process.env.TRANSCRIPTION_MODEL || 'whisper-1'}, ` +
+      `response_format=${process.env.TRANSCRIPTION_RESPONSE_FORMAT || 'verbose_json'})`
+    );
 
     segmentPublisher = new SegmentPublisher({
       redisUrl: botConfig.redisUrl || process.env.REDIS_URL || 'redis://localhost:6379',
