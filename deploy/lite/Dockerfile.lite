@@ -155,9 +155,14 @@ COPY packages/transcript-rendering/dist/ /transcript-rendering/dist/
 
 # Copy dashboard source (package.json only — no lockfile, to avoid path mismatch after sed)
 COPY services/dashboard/package.json /app/dashboard-build/
+# --legacy-peer-deps: ohne das bricht npm 10.9.3 (Stand playwright:v1.56.0-jammy)
+# hier mit `Cannot read properties of null (reading 'edgesOut')` ab — sein Weg,
+# einen Peer-Dependency-Konflikt zu melden, sobald eine `file:`-Dependency ohne
+# Lockfile aufgelöst wird. Der Fehler nennt weder das Paket noch den Konflikt und
+# ließ den gesamten vexa-lite-Build scheitern.
 RUN cd /app/dashboard-build && \
     sed -i 's|file:../../../packages/transcript-rendering|file:/transcript-rendering|' package.json && \
-    npm install --ignore-scripts && \
+    npm install --ignore-scripts --legacy-peer-deps && \
     rm -rf node_modules/@vexaai/transcript-rendering && \
     cp -r /transcript-rendering node_modules/@vexaai/transcript-rendering
 
