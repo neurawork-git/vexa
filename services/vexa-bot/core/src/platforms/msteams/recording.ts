@@ -99,6 +99,15 @@ export async function startTeamsRecording(page: Page, botConfig: BotConfig): Pro
 
             const combinedStream: MediaStream = await audioService.createCombinedAudioStream(mediaElements);
 
+            // Publish the recorder's combined stream so the per-speaker
+            // transcription graph binds to the SAME source. It runs in a
+            // separate page.evaluate scope, so window is the only bridge.
+            // Before this, per-speaker routing grabbed document.querySelector('audio')
+            // — a single element that can fall silent while the combined stream
+            // still carries every participant, which is exactly how the bot
+            // recorded 42 MB of audio and produced zero transcript segments.
+            (window as any).__vexaCombinedAudioStream = combinedStream;
+
             // Spin up the unified browser-side MediaRecorder pipeline.
             const pipeline = new u.BrowserMediaRecorderPipeline({
               stream: combinedStream,
@@ -586,23 +595,60 @@ export async function startTeamsRecording(page: Page, botConfig: BotConfig): Pro
             let lastCaptionSpeaker: string | null = null;
             let lastFlushedTextLength: number = 0;
 
+            // Stream choice lives in browser-utils so it is unit-testable: the
+            // recorder's combined stream wins, the single <audio> element is only
+            // a degraded fallback. The inline copy below is not redundancy for its
+            // own sake — Dockerfile.lite builds the browser bundle with
+            // `node build-browser-utils.js || true`, so a bundle that failed to
+            // build would otherwise leave per-speaker routing with no selector at
+            // all, which is worse than the bug being fixed.
+            const selectPerSpeakerStream = (): { stream: MediaStream; origin: string } | null => {
+              const fromBundle = (window as any).VexaBrowserUtils?.selectPerSpeakerAudioStream;
+              if (typeof fromBundle === 'function') {
+                return fromBundle(window, document);
+              }
+
+              (window as any).logBot?.(
+                '[Teams PerSpeaker] WARNING: browser-utils selector missing, using inline copy'
+              );
+              const hasTracks = (c: any) =>
+                !!c && typeof c.getAudioTracks === 'function' && c.getAudioTracks().length > 0;
+              const combined = (window as any).__vexaCombinedAudioStream;
+              if (hasTracks(combined)) return { stream: combined, origin: 'combined' };
+              const elStream = (document.querySelector('audio') as HTMLAudioElement | null)?.srcObject;
+              if (hasTracks(elStream)) {
+                return { stream: elStream as MediaStream, origin: 'audio-element-fallback' };
+              }
+              return null;
+            };
+
             const setupPerSpeakerAudioRouting = () => {
-              const audioEl = document.querySelector('audio') as HTMLAudioElement | null;
-              if (!audioEl || !(audioEl.srcObject instanceof MediaStream)) {
-                (window as any).logBot?.('[Teams PerSpeaker] No audio element found, skipping per-speaker routing');
+              const selected = selectPerSpeakerStream();
+              if (!selected) {
+                (window as any).logBot?.('[Teams PerSpeaker] No audio stream with tracks found, skipping per-speaker routing');
                 return;
               }
 
-              const stream = audioEl.srcObject as MediaStream;
-              if (stream.getAudioTracks().length === 0) {
-                (window as any).logBot?.('[Teams PerSpeaker] Audio stream has no tracks');
-                return;
+              const { stream, origin } = selected;
+              if (origin !== 'combined') {
+                (window as any).logBot?.(
+                  '[Teams PerSpeaker] WARNING: combined recorder stream unavailable, ' +
+                  'falling back to first <audio> element — recorder and transcription may diverge'
+                );
               }
 
               const ctx = new AudioContext({ sampleRate: 16000 });
               const source = ctx.createMediaStreamSource(stream);
               const processor = ctx.createScriptProcessor(4096, 1, 1);
               const botNameLower = ((botConfigData as any)?.botName || (botConfigData as any)?.name || 'vexa').toLowerCase();
+
+              // Health counters for the periodic diagnostic below. Without them
+              // 'Audio routing active' is printed even when not a single frame
+              // ever clears the silence gate — the state that went unnoticed
+              // for four months.
+              let peakRms = 0;
+              let framesSeen = 0;
+              let framesQueued = 0;
 
               processor.onaudioprocess = (e: AudioProcessingEvent) => {
                 const data = e.inputBuffer.getChannelData(0);
@@ -614,7 +660,10 @@ export async function startTeamsRecording(page: Page, botConfig: BotConfig): Pro
                 let sum = 0;
                 for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
                 const rms = Math.sqrt(sum / data.length);
+                framesSeen++;
+                if (rms > peakRms) peakRms = rms;
                 if (rms < 0.01) return;
+                framesQueued++;
 
                 audioQueue.push({ data: new Float32Array(data), timestamp: now });
 
@@ -626,7 +675,22 @@ export async function startTeamsRecording(page: Page, botConfig: BotConfig): Pro
 
               source.connect(processor);
               processor.connect(ctx.destination);
-              (window as any).logBot?.('[Teams PerSpeaker] Audio routing active (caption-aware with ring buffer)');
+              (window as any).logBot?.(
+                `[Teams PerSpeaker] Audio routing active (caption-aware with ring buffer), source=${origin}`
+              );
+
+              // Periodic proof that frames actually arrive and clear the gate.
+              const healthInterval = setInterval(() => {
+                (window as any).logBot?.(
+                  `[Teams PerSpeaker HEALTH] source=${origin} frames=${framesSeen} ` +
+                  `queued=${framesQueued} peakRms=${peakRms.toFixed(4)} ` +
+                  `ringBuffer=${audioQueue.length}`
+                );
+                peakRms = 0;
+                framesSeen = 0;
+                framesQueued = 0;
+              }, 30000);
+              (window as any).__vexaPerSpeakerHealthInterval = healthInterval;
             };
 
             // Caption observer: watches Teams live captions for speaker name +

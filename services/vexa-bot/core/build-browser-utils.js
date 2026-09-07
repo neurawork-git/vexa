@@ -33,7 +33,8 @@ ${browserUtilsContent}
     BrowserAudioService: utils.BrowserAudioService,
     BrowserMediaRecorderPipeline: utils.BrowserMediaRecorderPipeline,
     BrowserWhisperLiveService: utils.BrowserWhisperLiveService,
-    generateBrowserUUID: utils.generateBrowserUUID
+    generateBrowserUUID: utils.generateBrowserUUID,
+    selectPerSpeakerAudioStream: utils.selectPerSpeakerAudioStream
   };
 
   // Also expose performLeaveAction for platform-specific leave UX

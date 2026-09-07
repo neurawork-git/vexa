@@ -24,6 +24,55 @@ export function generateBrowserUUID(): string {
 /**
  * Browser-compatible AudioService for browser context
  */
+/**
+ * Result of picking the audio source the per-speaker transcription graph
+ * listens on.
+ */
+export interface PerSpeakerStreamSelection {
+  stream: MediaStream;
+  /** 'combined' = the recorder's own stream; 'audio-element-fallback' = degraded. */
+  origin: "combined" | "audio-element-fallback";
+}
+
+/**
+ * Pick the stream the per-speaker transcription graph must bind to.
+ *
+ * The recorder's combined stream is authoritative: recorder and transcription
+ * have to share one source. When they do not, a single <audio> element can fall
+ * silent while the combined stream still carries every participant — the bot
+ * then records complete audio and produces zero transcript segments, with
+ * nothing in the log to say so.
+ *
+ * The single-element path stays only as a degraded fallback and reports itself
+ * as such through `origin`, so the caller can log the divergence instead of
+ * running on quietly.
+ *
+ * Pure and injectable: `win` and `doc` are parameters so this is testable
+ * without a browser.
+ */
+export function selectPerSpeakerAudioStream(
+  win: any,
+  doc: { querySelector(selector: string): any } | null | undefined
+): PerSpeakerStreamSelection | null {
+  const hasAudioTracks = (candidate: any): boolean =>
+    !!candidate &&
+    typeof candidate.getAudioTracks === "function" &&
+    candidate.getAudioTracks().length > 0;
+
+  const combined = win?.__vexaCombinedAudioStream;
+  if (hasAudioTracks(combined)) {
+    return { stream: combined as MediaStream, origin: "combined" };
+  }
+
+  const audioEl = doc?.querySelector("audio");
+  const elementStream = audioEl?.srcObject;
+  if (hasAudioTracks(elementStream)) {
+    return { stream: elementStream as MediaStream, origin: "audio-element-fallback" };
+  }
+
+  return null;
+}
+
 export class BrowserAudioService {
   private config: any;
   private processor: any = null;
