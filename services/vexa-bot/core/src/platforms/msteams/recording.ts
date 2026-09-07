@@ -592,6 +592,10 @@ export async function startTeamsRecording(page: Page, botConfig: BotConfig): Pro
             }
             const audioQueue: QueuedChunk[] = [];
             let captionsEnabled = false;
+            // Wie oft der Caption-Pfad tatsaechlich Audio weitergereicht hat. Fuer
+            // Teams ist das der EINZIGE Weg zu Whisper (kein VAD-Fallback), also der
+            // aussagekraeftigste Gesundheitswert ueberhaupt.
+            let captionFlushCount = 0;
             let lastCaptionSpeaker: string | null = null;
             let lastFlushedTextLength: number = 0;
 
@@ -681,10 +685,17 @@ export async function startTeamsRecording(page: Page, botConfig: BotConfig): Pro
 
               // Periodic proof that frames actually arrive and clear the gate.
               const healthInterval = setInterval(() => {
+                // Bewusst periodisch und nicht einmalig: `meetings.data->bot_logs` ist
+                // ein Ringpuffer von ~100-130 Zeilen. Einmalige Startmeldungen wie
+                // "Caption wrapper found" sind dort schon im ERFOLGSFALL verdraengt —
+                // deshalb liess sich der Ausfall ab dem 25.08.2026 nachtraeglich nicht
+                // mehr zuordnen. Diese Zeile erneuert sich und ueberlebt damit.
                 (window as any).logBot?.(
                   `[Teams PerSpeaker HEALTH] source=${origin} frames=${framesSeen} ` +
                   `queued=${framesQueued} peakRms=${peakRms.toFixed(4)} ` +
-                  `ringBuffer=${audioQueue.length}`
+                  `ringBuffer=${audioQueue.length} ` +
+                  `captions=${captionsEnabled ? 'active' : 'INACTIVE'} ` +
+                  `captionFlushes=${captionFlushCount}`
                 );
                 peakRms = 0;
                 framesSeen = 0;
@@ -753,6 +764,7 @@ export async function startTeamsRecording(page: Page, botConfig: BotConfig): Pro
                     const entry = audioQueue.shift()!;
                     if (typeof (window as any).__vexaTeamsAudioData === 'function') {
                       (window as any).__vexaTeamsAudioData(speaker, Array.from(entry.data));
+                      captionFlushCount++;
                     }
                     flushed++;
                   }
@@ -779,6 +791,7 @@ export async function startTeamsRecording(page: Page, botConfig: BotConfig): Pro
                     const entry = audioQueue.shift()!;
                     if (typeof (window as any).__vexaTeamsAudioData === 'function') {
                       (window as any).__vexaTeamsAudioData(speaker, Array.from(entry.data));
+                      captionFlushCount++;
                     }
                     flushed++;
                   }
